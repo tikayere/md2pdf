@@ -1,0 +1,41 @@
+# md2pdf-book configuration
+# Usage: md2pdf-book book.yaml
+
+title:  "The Complete Developer Guide"
+author: "Jane Smith"
+date:   "2024-01-15"
+output: "developer-guide.pdf"
+
+# Ordered list of markdown files to compile into the book.
+# Paths are relative to this config file.
+pages:
+  - pages/intro.md
+  - pages/math.md
+  - pages/diagrams.md
+  - pages/code.md
+  - pages/appendices.md
+
+layout:
+  page_size:   A4          # A4 | A3 | Letter | Legal
+  orientation: portrait    # portrait | landscape
+  font_size:   11pt
+  line_height: "1.6"
+  margins:
+    top:    2.5cm
+    bottom: 2.5cm
+    left:   3cm
+    right:  2.5cm
+
+features:
+  cover:          true
+  toc:            true
+  page_numbers:   true
+  chapter_breaks: true
+
+style:
+  highlight_theme: github   # github | github-dark
+  header_text: "The Complete Developer Guide"
+  footer_text: ""
+
+# Uncomment to save intermediate HTML for debugging:
+# save_html: debug.html

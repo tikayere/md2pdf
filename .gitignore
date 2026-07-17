@@ -1,0 +1,12 @@
+node_modules/
+
+# Local Claude Code settings (machine-specific, not project config)
+.claude/settings.local.json
+
+# Editor/OS cruft
+.DS_Store
+Thumbs.db
+
+# Unused empty lock files created by the local environment, not the project
+service.conf.lock
+system.conf.lock
