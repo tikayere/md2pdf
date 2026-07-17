@@ -196,11 +196,15 @@ Standard fenced ` ```mermaid ` blocks. Two label quirks are handled automaticall
 - **Line breaks**: a literal `\n` inside a label becomes a real line break.
 - **Quotes**: `\"escaped like this\"` inside a label renders as typographic curly quotes (`"like this"`) — Mermaid's own grammar can't represent a literal straight quote inside a quoted label at all, so this is the only reliable way to get one to display.
 
+Both are md2pdf-book-specific preprocessing, so this example is shown as plain text rather than a live diagram — a stock Mermaid renderer (GitHub's included) doesn't understand either and will fail to parse it. It renders correctly once this tool processes it:
+
+~~~text
 ```mermaid
 flowchart TD
     A["Request received\nvalidated by middleware"] --> B{Cache hit?}
     B -->|No| C["Query source: \"users\" table"]
 ```
+~~~
 
 ### Admonitions / callouts
 
