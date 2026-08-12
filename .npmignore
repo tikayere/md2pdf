@@ -1,0 +1,38 @@
+# .npmignore — controls what ships in the published npm tarball.
+#
+# vendor/ is NOT excluded: src/assets.js reads KaTeX/Mermaid/Paged.js from
+# there at runtime, so it must be part of the installed package.
+#
+# This is a denylist layered on top of package.json's "files" allowlist —
+# "files" already restricts the tarball to bin/, src/, vendor/, README.md,
+# and LICENSE, so most of this is redundant belt-and-suspenders for anyone
+# who trims the "files" field later.
+
+# VCS / CI
+.git
+.github
+.gitignore
+
+# Editor / OS cruft
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local Claude Code / AI assistant settings
+.claude
+
+# Dependencies (npm installs its own copy from package.json)
+node_modules
+
+# Example book and its rendered output — not needed to use the package,
+# only to hack on the repo. Regenerate with: npm test
+examples
+
+# Debug/scratch artifacts a local run may have left behind
+*.log
+debug.html
+*.pdf
+
+# Lockfiles other than the one npm itself manages
+yarn.lock
+pnpm-lock.yaml

@@ -33,7 +33,7 @@ import matter                from 'gray-matter';
 import path                  from 'node:path';
 import fs                    from 'node:fs';
 
-import { katexJs, katexCss, mermaidJs, pagedJs, getHljsThemeCss } from './assets.js';
+import { katexJs, katexCss, mermaidJs, pagedJs, getHljsThemeCss, hljsThemeExists, listHljsThemes } from './assets.js';
 
 // ─── marked setup ────────────────────────────────────────────────────────────
 //
@@ -358,6 +358,62 @@ const ADMONITION_TYPES = {
   caution:   { label: 'Caution',   className: 'caution' },
 };
 
+// ─── Code block language icons ───────────────────────────────────────────────
+//
+// A small colored badge in front of the language label — the same
+// convention GitHub's own repo language bar uses (github-linguist's color
+// list: https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml),
+// paired with a generic "code brackets" glyph rather than any language's
+// own trademarked logo. That means it works for literally any language
+// (hljs supports ~190) with zero icon assets to vendor, draw, or license —
+// just a hex color and one shared inline SVG shape.
+
+const LANGUAGE_ALIASES = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+  ts: 'typescript', tsx: 'typescript',
+  py: 'python', py3: 'python',
+  rb: 'ruby', sh: 'bash', shell: 'bash', zsh: 'bash', console: 'bash',
+  yml: 'yaml', md: 'markdown',
+  'c++': 'cpp', cxx: 'cpp', 'c#': 'csharp', cs: 'csharp',
+  golang: 'go', dockerfile: 'docker', kt: 'kotlin', rs: 'rust',
+  plaintext: 'text', txt: 'text', objectivec: 'objc',
+};
+
+const LANGUAGE_COLORS = {
+  javascript: '#f1e05a', typescript: '#3178c6', python: '#3572a5',
+  ruby: '#701516', java: '#b07219', c: '#555555', cpp: '#f34b7d',
+  csharp: '#178600', go: '#00add8', rust: '#dea584', php: '#4f5d95',
+  html: '#e34c26', css: '#563d7c', scss: '#c6538c', less: '#1d365d',
+  json: '#292929', yaml: '#cb171e', toml: '#9c4221', ini: '#6d6d6d',
+  bash: '#89e051', powershell: '#012456', sql: '#e38c00',
+  markdown: '#083fa1', docker: '#384d54', graphql: '#e10098',
+  kotlin: '#a97bff', swift: '#f05138', dart: '#00b4ab', xml: '#0060ac',
+  diff: '#808080', perl: '#0298c3', lua: '#000080', r: '#198ce7',
+  elixir: '#6e4a7e', erlang: '#b83998', haskell: '#5e5086',
+  scala: '#c22d40', clojure: '#5881d8', groovy: '#4298b8',
+  objc: '#438eff', vim: '#199f4b', makefile: '#427819',
+  nginx: '#009639', text: '#8b949e',
+};
+
+/** Resolves a highlight.js language name to its GitHub-linguist-style accent color, falling back to a neutral gray for anything not in the curated list above. */
+function languageAccentColor(language) {
+  const key = LANGUAGE_ALIASES[language] || language;
+  return LANGUAGE_COLORS[key] || '#8b949e';
+}
+
+/** A colored badge + generic "code brackets" glyph shown before the language label on every fenced code block — see the block comment above. */
+function languageIconHtml(language) {
+  return (
+    `<span class="code-lang-icon" style="background:${languageAccentColor(language)}">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" ` +
+        `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+        `<polyline points="16 18 22 12 16 6"></polyline>` +
+        `<polyline points="8 6 2 12 8 18"></polyline>` +
+      `</svg>` +
+    `</span>`
+  );
+}
+
 // ─── Custom renderer (registered once at module load) ────────────────────────
 //
 // marked v12 changed renderer method signatures:
@@ -395,7 +451,7 @@ marked.use({
         : hljs.highlightAuto(normalizedCode).value;
 
       const langLabel = language
-        ? `<span class="code-lang">${escapeHtml(language)}</span>`
+        ? `<span class="code-lang">${languageIconHtml(language)}${escapeHtml(language)}</span>`
         : '';
 
       return (
@@ -477,13 +533,20 @@ function extractHeadings(html) {
   return headings;
 }
 
-function buildToc(headings) {
-  if (!headings.length) return '';
+/**
+ * @param {Array<{level:number,id:string,text:string}>} headings
+ * @param {number} [maxLevel=6] - drop headings deeper than this from the TOC
+ *   (features.toc_depth / --toc-depth); heading ids/anchors in the body are
+ *   unaffected, only which entries the TOC itself lists.
+ */
+function buildToc(headings, maxLevel = 6) {
+  const filtered = headings.filter((h) => h.level <= maxLevel);
+  if (!filtered.length) return '';
 
   let toc   = '<nav class="toc"><h2 class="toc-title">Table of Contents</h2><ul>';
   const stack = [];
 
-  headings.forEach((h) => {
+  filtered.forEach((h) => {
     const level = h.level;
 
     while (stack.length > 0 && stack[stack.length - 1] > level) {
@@ -602,6 +665,46 @@ function applyChapterNumbers(html, enabled) {
   });
 }
 
+// ─── Highlight theme resolution ──────────────────────────────────────────────
+
+/**
+ * Resolves `style.highlight_theme` / `--highlight-theme` to a real
+ * highlight.js theme name, failing fast with a helpful message instead of
+ * silently downgrading to the default — this used to hardcode only
+ * "github"/"github-dark" as legal values and quietly ignored anything else;
+ * any of the ~80 themes highlight.js ships now works ("monokai", "nord",
+ * "atom-one-dark", ...). "dark" is kept as a friendly alias for
+ * "github-dark" for backwards compatibility.
+ */
+function resolveHighlightTheme(name) {
+  const resolved = name === 'dark' ? 'github-dark' : name;
+  if (hljsThemeExists(resolved)) return resolved;
+
+  const sample = listHljsThemes().slice(0, 12).join(', ');
+  throw new Error(
+    `Unknown highlight theme "${name}".\n` +
+    `  Try "github" or "github-dark", or any highlight.js theme name, e.g.: ${sample}, ...\n` +
+    `  Full list: node -e "console.log(require('highlight.js/lib/index.js') && require('fs').readdirSync(require('path').dirname(require.resolve('highlight.js/styles/github.css'))))"` +
+    ` or browse https://highlightjs.org/examples`
+  );
+}
+
+// ─── Custom CSS ───────────────────────────────────────────────────────────────
+
+/**
+ * Reads a user-supplied CSS file (style.custom_css / --css) to append after
+ * the built-in stylesheet, so it can override anything above it by normal
+ * cascade order without needing extra specificity. Returns '' when unset.
+ */
+function loadCustomCss(customCssPath) {
+  if (!customCssPath) return '';
+  try {
+    return fs.readFileSync(customCssPath, 'utf8');
+  } catch (err) {
+    throw new Error(`Could not read custom CSS file: ${customCssPath}\n  ${err.message}`);
+  }
+}
+
 // ─── Full book HTML builder ───────────────────────────────────────────────────
 
 function buildBookHtml(files, options = {}) {
@@ -620,8 +723,10 @@ function buildBookHtml(files, options = {}) {
     headerText     = '',
     footerText     = '',
     showToc        = true,
+    tocDepth       = 6,          // features.toc_depth / --toc-depth — 1..6, headings deeper than this are omitted from the TOC
     highlightTheme = 'github',
     coverImage     = null,
+    customCssPath  = null,       // style.custom_css / --css — appended after the built-in stylesheet
     engine         = 'chromium', // 'chromium' | 'pagedjs' — see renderer.js
   } = options;
 
@@ -660,7 +765,7 @@ function buildBookHtml(files, options = {}) {
   // TOC/heading extraction must happen before chapter numbers are stamped
   // in, so "Chapter 3" never leaks into a TOC entry or a heading id.
   const headings = extractHeadings(combinedHtml);
-  const tocHtml   = buildToc(headings);
+  const tocHtml   = buildToc(headings, tocDepth);
 
   combinedHtml = applyChapterNumbers(combinedHtml, chapterNumbers);
 
@@ -670,10 +775,13 @@ function buildBookHtml(files, options = {}) {
   }
 
   // ── Derived values ──
-  const hljsThemeCss =
-    highlightTheme === 'github-dark' || highlightTheme === 'dark'
-      ? 'github-dark'
-      : 'github';
+  const resolvedHighlightTheme = resolveHighlightTheme(highlightTheme);
+  // Only github/dark get bespoke dark chrome on the code-block language
+  // label — see the "CODE THEME OVERRIDES" CSS below. Any of the other ~78
+  // highlight.js themes still renders correctly, just with the default
+  // light label chrome, rather than the tool refusing the theme outright.
+  const isDarkCodeTheme = resolvedHighlightTheme === 'github-dark';
+  const customCss = loadCustomCss(customCssPath);
 
   const pageMarginCss = [
     `size: ${pageSize}`,
@@ -756,7 +864,7 @@ function buildBookHtml(files, options = {}) {
 <style>${katexCss}</style>
 
 <!-- highlight.js theme — read from the npm dependency already on disk -->
-<style>${getHljsThemeCss(hljsThemeCss)}</style>
+<style>${getHljsThemeCss(resolvedHighlightTheme)}</style>
 
 <!-- Mermaid v11 — vendored; startOnLoad disabled, we call mermaid.run() manually -->
 <script>${mermaidJs}</script>
@@ -1206,7 +1314,45 @@ hr.section {
   text-transform: uppercase;
 
   border-bottom: 1px solid #dde1e7;
+
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
+
+/* Colored language badge — see languageIconHtml() in converter.js */
+.code-lang-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 0.55em;
+  border-radius: 5px;
+  vertical-align: middle;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.code-lang-icon svg {
+  width: 11px;
+  height: 11px;
+}
+
+${isDarkCodeTheme ? `
+/* Bespoke dark chrome for the github-dark theme so the language-label bar
+   matches the dark code background instead of the light default above.
+   Any other non-default theme (there are ~80 to choose from — see
+   resolveHighlightTheme()) keeps the light chrome; it still renders
+   correctly, just without a theme-matched label bar. */
+.code-lang {
+  background: #161b22;
+  color: #8b949e;
+  border-bottom-color: #30363d;
+}
+.code-block-wrapper {
+  border-color: #30363d;
+}
+` : ''}
 
 .code-block-wrapper pre {
   margin: 0 !important;
@@ -1646,10 +1792,6 @@ dd {
     background: #1a1a2e !important;
   }
 
-  .code-lang {
-    background: #2d3748 !important;
-  }
-
   h1, h2, h3, h4, h5, h6 {
     page-break-after: avoid;
   }
@@ -1673,6 +1815,13 @@ ${engine === 'pagedjs' ? `
 }
 ` : ''}
 </style>
+
+${customCss ? `<!-- Custom CSS (style.custom_css / --css) — loaded after the built-in
+     stylesheet above so it wins the cascade at equal specificity without
+     needing extra !important rules. -->
+<style>
+${customCss}
+</style>` : ''}
 </head>
 <body>
 
@@ -1805,4 +1954,6 @@ export {
   renderFootnoteRefs,
   buildFootnotesHtml,
   fileToDataUri,
+  resolveHighlightTheme,
+  loadCustomCss,
 };

@@ -57,6 +57,7 @@ async function convertToPdf(inputFiles, outputPath, options = {}) {
     timeout:     options.timeout,
     verbose:     options.verbose,
     engine:      options.engine      || 'chromium',
+    chromePath:  options.chromePath  || null,
   });
 
   return { outputPath, fileCount: files.length };
