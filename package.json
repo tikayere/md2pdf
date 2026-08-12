@@ -1,14 +1,55 @@
 {
   "name": "md2pdf-book",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Professional Markdown → PDF book converter with YAML config, LaTeX, and Mermaid support",
   "type": "module",
+  "license": "MIT",
+  "author": "POUROU Tikayere Dominique",
+  "homepage": "https://github.com/tikayere/md2pdf#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tikayere/md2pdf.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tikayere/md2pdf/issues"
+  },
+  "keywords": [
+    "markdown",
+    "pdf",
+    "book",
+    "ebook",
+    "cli",
+    "latex",
+    "katex",
+    "mermaid",
+    "yaml",
+    "typeset",
+    "converter",
+    "puppeteer",
+    "pagedjs"
+  ],
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "vendor",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
-    "md2pdf": "./bin/md2pdf.js"
+    "md2pdf": "./bin/md2pdf.js",
+    "md2pdf-book": "./bin/md2pdf.js"
   },
   "scripts": {
     "start": "node bin/md2pdf.js",
-    "test": "node bin/md2pdf.js examples/book.yaml -v"
+    "test": "node bin/md2pdf.js examples/book.yaml -v",
+    "lint:example": "node bin/md2pdf.js examples/book.yaml --lint"
   },
   "dependencies": {
     "chalk": "^5.6.2",

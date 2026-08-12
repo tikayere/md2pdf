@@ -43,6 +43,8 @@
  */
 
 import puppeteer from "puppeteer";
+import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -57,6 +59,8 @@ import puppeteer from "puppeteer";
  * @param {object} [options.margins]
  * @param {number} [options.timeout=90000]
  * @param {boolean} [options.verbose=false]
+ * @param {string}  [options.chromePath] - explicit Chrome/Chromium executable
+ *   to launch (--chrome-path / PUPPETEER_EXECUTABLE_PATH), bypassing auto-detection
  */
 async function renderToPdf(html, outputPath, options = {}) {
   const {
@@ -66,9 +70,10 @@ async function renderToPdf(html, outputPath, options = {}) {
     timeout = 900000,
     verbose = false,
     engine = "chromium",
+    chromePath = null,
   } = options;
 
-  const browser = await launchBrowser(verbose);
+  const browser = await launchBrowser(verbose, chromePath);
 
   try {
     const page = await preparePage(browser, html, timeout, verbose, engine);
@@ -117,9 +122,10 @@ async function renderToPdfBuffer(html, options = {}) {
     margins = { top: "2.5cm", bottom: "2.5cm", left: "3cm", right: "2.5cm" },
     timeout = 9000000,
     engine = "chromium",
+    chromePath = null,
   } = options;
 
-  const browser = await launchBrowser(false);
+  const browser = await launchBrowser(false, chromePath);
 
   try {
     const page = await preparePage(browser, html, timeout, false, engine);
@@ -135,19 +141,103 @@ async function renderToPdfBuffer(html, options = {}) {
 
 // ─── Private helpers ─────────────────────────────────────────────────────────
 
-async function launchBrowser(verbose) {
-  if (verbose) process.stdout.write("  Launching Chromium...\n");
+const LAUNCH_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--font-render-hinting=none",
+];
 
-  return puppeteer.launch({
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--font-render-hinting=none",
-    ],
-  });
+/**
+ * Launches Chromium, preferring (in order): an explicit `chromePath` /
+ * PUPPETEER_EXECUTABLE_PATH, then the Chromium `puppeteer` downloaded on
+ * `npm install`, then — only if that fails to actually start — a
+ * system-installed Chrome/Chromium found via findSystemChrome().
+ *
+ * The fallback exists because puppeteer's own downloaded Chromium build can
+ * fail to launch on some Linux setups (missing shared libs, restrictive
+ * containers, a corrupted/incompatible download) even though a perfectly
+ * good system Chrome is sitting right there — "Failed to launch the browser
+ * process!" with no further detail is the single most common report for
+ * exactly this class of problem. See buildLaunchError() for what a user
+ * sees if neither works.
+ */
+async function launchBrowser(verbose, chromePath = null) {
+  const explicitPath = chromePath || process.env.PUPPETEER_EXECUTABLE_PATH || null;
+
+  if (explicitPath) {
+    if (verbose) process.stdout.write(`  Launching Chromium (${explicitPath})...\n`);
+    try {
+      return await puppeteer.launch({ headless: "new", args: LAUNCH_ARGS, executablePath: explicitPath });
+    } catch (err) {
+      throw buildLaunchError(err, explicitPath);
+    }
+  }
+
+  if (verbose) process.stdout.write("  Launching Chromium...\n");
+  try {
+    return await puppeteer.launch({ headless: "new", args: LAUNCH_ARGS });
+  } catch (bundledErr) {
+    const systemChrome = findSystemChrome();
+    if (!systemChrome) throw buildLaunchError(bundledErr);
+
+    if (verbose) {
+      process.stdout.write(
+        `  Bundled Chromium failed to launch — retrying with system browser: ${systemChrome}\n`
+      );
+    }
+    try {
+      return await puppeteer.launch({ headless: "new", args: LAUNCH_ARGS, executablePath: systemChrome });
+    } catch (systemErr) {
+      throw buildLaunchError(systemErr, systemChrome);
+    }
+  }
+}
+
+const CHROME_BINARY_NAMES = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium"];
+
+const COMMON_CHROME_PATHS = [
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/chromium",
+  "/snap/bin/chromium",
+  "/opt/google/chrome/google-chrome",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+];
+
+/** Looks for a system-installed Chrome/Chromium: first on $PATH, then a few common install locations. Returns null if none is found. */
+function findSystemChrome() {
+  const which = process.platform === "win32" ? "where" : "which";
+  for (const name of CHROME_BINARY_NAMES) {
+    try {
+      const resolved = execFileSync(which, [name], { stdio: ["ignore", "pipe", "ignore"] })
+        .toString()
+        .trim()
+        .split("\n")[0];
+      if (resolved && fs.existsSync(resolved)) return resolved;
+    } catch { /* not on PATH — keep looking */ }
+  }
+  return COMMON_CHROME_PATHS.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/** Appends actionable next steps to a Puppeteer launch failure instead of leaving the bare "Failed to launch the browser process!" with no way forward. */
+function buildLaunchError(err, triedPath) {
+  const hint =
+    `\n\n  md2pdf couldn't start a Chromium/Chrome browser to render the PDF.\n` +
+    `  ${triedPath ? `Last tried: ${triedPath}\n  ` : ''}This is almost always one of:\n` +
+    `    1. The Chromium puppeteer downloads on "npm install" is missing/broken —\n` +
+    `       reinstall it: npx puppeteer browsers install chrome\n` +
+    `    2. A system Chrome/Chromium is installed but wasn't auto-detected —\n` +
+    `       point at it directly: --chrome-path /path/to/chrome\n` +
+    `       (or set the PUPPETEER_EXECUTABLE_PATH environment variable)\n` +
+    `    3. Missing system libraries (common on minimal Linux installs) — see\n` +
+    `       https://pptr.dev/troubleshooting#chrome-doesnt-launch-on-linux\n`;
+  err.message += hint;
+  return err;
 }
 
 async function preparePage(browser, html, timeout, verbose, engine = "chromium") {

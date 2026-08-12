@@ -10,17 +10,21 @@ md2pdf-book book.yaml
 
 - [Features](#features)
 - [Install](#install)
+- [Troubleshooting: "Failed to launch the browser process!"](#troubleshooting-failed-to-launch-the-browser-process)
 - [Quick start](#quick-start)
 - [CLI reference](#cli-reference)
 - [`book.yaml` reference](#bookyaml-reference)
 - [Chapters, pagination, and page breaks](#chapters-pagination-and-page-breaks)
 - [Markdown features](#markdown-features)
+  - [Code blocks](#code-blocks)
   - [LaTeX math](#latex-math)
   - [Mermaid diagrams](#mermaid-diagrams)
   - [Admonitions / callouts](#admonitions--callouts)
   - [Footnotes](#footnotes)
   - [Images](#images)
   - [Table of contents](#table-of-contents)
+- [Syntax highlighting themes](#syntax-highlighting-themes)
+- [Custom CSS](#custom-css)
 - [Pagination engines](#pagination-engines)
 - [Validating a book without rendering it (`--lint`)](#validating-a-book-without-rendering-it---lint)
 - [Using it as a library](#using-it-as-a-library)
@@ -36,14 +40,34 @@ md2pdf-book book.yaml
 - **Multiple chapters per file** — chapters are defined by top-level (`#`) headings, not by file boundaries, so a single Markdown file can hold as many chapters as you like (handy for appendices).
 - **Admonitions** — GitHub-style `> [!NOTE]` / `[!TIP]` / `[!IMPORTANT]` / `[!WARNING]` / `[!CAUTION]` callout boxes.
 - **Footnotes** — Pandoc-style `text[^id]` / `[^id]: definition`, auto-numbered.
-- **Automatic chapter numbering**, custom cover images, syntax highlighting (via highlight.js), auto-generated table of contents, running headers/footers, and manual `<!-- pagebreak -->` markers.
+- **Automatic chapter numbering**, custom cover images, syntax highlighting (via highlight.js, any of its ~80 themes) with a color-coded language badge on every code block, auto-generated table of contents (with an adjustable depth), running headers/footers, and manual `<!-- pagebreak -->` markers.
+- **Custom CSS hook** — drop a CSS file on top of the built-in stylesheet for one-off style tweaks without forking the tool.
 - **Two pagination engines** — the default is fast; an opt-in [Paged.js](https://pagedjs.org)-based engine adds a running header that tracks the current chapter title and footnotes that render at the bottom of the exact page they're referenced on.
 - **`--lint`** — validate a book (missing images, dangling footnotes, duplicate heading ids) in under a second, without rendering a PDF.
+- **`--quiet`** — suppress progress output for scripting/CI, printing only the final result (or an error).
 - **Fully offline** — KaTeX, Mermaid, highlight.js, and Paged.js are vendored into the repo and inlined into the generated HTML. No CDN calls happen at render time.
 
 ## Install
 
 Requires Node.js 20.10+ (for `import ... with { type: 'json' }` support).
+
+From npm, as a global CLI:
+
+```bash
+npm install -g md2pdf-book
+md2pdf-book book.yaml
+```
+
+Or straight from GitHub, without publishing anywhere:
+
+```bash
+npm install -g github:tikayere/md2pdf
+md2pdf-book book.yaml
+```
+
+Both install `md2pdf` and `md2pdf-book` as equivalent global commands.
+
+To hack on the source instead:
 
 ```bash
 git clone https://github.com/tikayere/md2pdf.git
@@ -51,12 +75,35 @@ cd md2pdf
 npm install
 ```
 
-Run it locally with `node bin/md2pdf.js`, or link it for a global `md2pdf` command:
+Run it locally with `node bin/md2pdf.js`, or link it for the global commands above:
 
 ```bash
 npm link
 md2pdf book.yaml
 ```
+
+## Troubleshooting: "Failed to launch the browser process!"
+
+md2pdf renders through headless Chromium via [Puppeteer](https://pptr.dev), which downloads its own pinned Chromium build on `npm install`. On some Linux setups that download fails to actually launch — missing shared libraries, a restrictive container/sandbox, or a corrupted download — surfacing as a bare `Error: Failed to launch the browser process!` with no further detail.
+
+As of this version, md2pdf handles the common case for you: if the bundled Chromium fails to start, it automatically retries with a system-installed Chrome/Chromium (found on `$PATH` or in a few standard install locations) before giving up — so `apt install google-chrome-stable` (or `chromium`, or `chromium-browser`) is often all you need, no configuration required.
+
+If it still can't find one, or picks the wrong one:
+
+```bash
+md2pdf-book book.yaml --chrome-path /usr/bin/google-chrome-stable
+```
+```yaml
+chrome_path: /usr/bin/google-chrome-stable   # top-level in book.yaml
+```
+
+or the environment variable Puppeteer itself already understands:
+
+```bash
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable md2pdf-book book.yaml
+```
+
+Still stuck? It's most likely missing system libraries — reinstall the bundled Chromium (`npx puppeteer browsers install chrome`) or see [Puppeteer's Linux troubleshooting guide](https://pptr.dev/troubleshooting#chrome-doesnt-launch-on-linux) for the `apt-get install` list of shared libs headless Chrome needs.
 
 ## Quick start
 
@@ -100,12 +147,16 @@ Run `md2pdf-book --help` for the full, current list — flags mirror the `book.y
 | `--engine <engine>` | `chromium` (default) or `pagedjs` — see [Pagination engines](#pagination-engines) |
 | `--chapter-numbers` | Prefix chapters with "Chapter N" |
 | `--cover-image <path>` | Use an image as the cover background |
-| `--highlight-theme <theme>` | `github` or `github-dark` |
+| `--highlight-theme <theme>` | Any [highlight.js theme](#syntax-highlighting-themes) — `github`, `github-dark`, `monokai`, `nord`, ... |
+| `--css <path>` | Extra CSS file appended after the built-in stylesheet — see [Custom CSS](#custom-css) |
+| `--toc-depth <n>` | Only list headings up to level `n` (1-6) in the TOC |
 | `--no-cover` / `--no-toc` / `--no-page-numbers` / `--no-chapter-breaks` | Disable the corresponding feature |
 | `--lint` | Validate without rendering — see below |
 | `--save-html <path>` | Dump the intermediate HTML (useful for debugging layout) |
+| `--chrome-path <path>` | Explicit Chrome/Chromium to launch — see [Troubleshooting](#troubleshooting-failed-to-launch-the-browser-process) |
 | `--init` | Write a starter `book.yaml` and exit |
 | `-v, --verbose` | Print render progress |
+| `-q, --quiet` | Suppress progress output — prints only the final output path (or an error) |
 
 ## `book.yaml` reference
 
@@ -141,6 +192,8 @@ layout:
 features:
   cover:           true
   toc:             true
+  toc_depth:       6       # only list headings up to this level (1-6) in the TOC;
+                            # body anchors/ids are unaffected either way
   page_numbers:    true
   chapter_breaks:  true    # new page before every top-level (#) heading;
                             # use "<!-- pagebreak -->" mid-file for extra breaks
@@ -148,16 +201,21 @@ features:
                             # (headings starting with "Appendix" are skipped)
 
 style:
-  highlight_theme: github   # github | github-dark
+  highlight_theme: github   # any highlight.js theme — see "Syntax highlighting themes"
   header_text: ""
   footer_text: ""
   # cover_image: cover.jpg  # replaces the default gradient cover background
+  # custom_css: custom.css  # appended after the built-in stylesheet
 
 # Uncomment to save intermediate HTML for debugging:
 # save_html: debug.html
+
+# Only needed if Chrome/Chromium auto-detection picks the wrong browser —
+# see "Troubleshooting: Failed to launch the browser process!"
+# chrome_path: /usr/bin/google-chrome-stable
 ```
 
-All paths (`pages`, `cover_image`, `save_html`, `output`) resolve relative to the `book.yaml` file, not your current directory.
+All paths (`pages`, `cover_image`, `custom_css`, `save_html`, `output`) resolve relative to the `book.yaml` file, not your current directory. `chrome_path` is the one exception — it's a system path, passed through as-is.
 
 ## Chapters, pagination, and page breaks
 
@@ -178,6 +236,19 @@ or
 ```
 
 ## Markdown features
+
+### Code blocks
+
+Fenced code blocks are syntax-highlighted via highlight.js and get a header bar with a color-coded language badge — the same colors [GitHub's own language stats](https://github.com/github-linguist/linguist) use — so a book with mixed `bash`/`python`/`javascript` snippets stays easy to scan at a glance:
+
+~~~markdown
+```python
+def greet(name):
+    return f"Hello, {name}!"
+```
+~~~
+
+The badge is generated from the fence's language tag (any of the ~190 highlight.js recognizes, plus common aliases like `js`/`py`/`sh`), not a per-language logo asset — see [Syntax highlighting themes](#syntax-highlighting-themes) for theming the code itself.
 
 ### LaTeX math
 
@@ -238,7 +309,33 @@ With the default (`chromium`) engine, footnotes are collected into a numbered li
 
 ### Table of contents
 
-Auto-generated from your headings. Drop `[TOC]` on its own line anywhere to place it inline; otherwise it gets its own page right after the cover.
+Auto-generated from your headings. Drop `[TOC]` on its own line anywhere to place it inline; otherwise it gets its own page right after the cover. Use `features.toc_depth` / `--toc-depth <n>` to cap how deep it goes (e.g. `2` lists only H1/H2, keeping a long book's TOC to one page) — this only affects which entries the TOC lists, heading anchors in the body are unchanged.
+
+## Syntax highlighting themes
+
+`style.highlight_theme` / `--highlight-theme` accepts any theme name from [highlight.js's style library](https://highlightjs.org/examples) (~80 of them: `github`, `github-dark`, `monokai`, `nord`, `atom-one-dark`, `night-owl`, `tokyo-night-dark`, ...) — not just the two GitHub themes. Pass an unknown name and the build fails fast with a clear error rather than silently falling back:
+
+```bash
+md2pdf-book book.yaml --highlight-theme nord
+```
+```yaml
+style:
+  highlight_theme: nord
+```
+
+The code block's language-label bar gets bespoke dark styling for `github-dark`; every other theme still renders correctly, just with the default light label bar.
+
+## Custom CSS
+
+For style tweaks beyond what `layout`/`style` options expose, point at a CSS file — it's appended after the built-in stylesheet, so it wins the cascade at equal specificity without needing `!important`:
+
+```bash
+md2pdf-book book.yaml --css my-overrides.css
+```
+```yaml
+style:
+  custom_css: custom.css   # resolved relative to book.yaml
+```
 
 ## Pagination engines
 
@@ -313,6 +410,10 @@ src/lint.js       --lint validation checks
 src/index.js      Programmatic API
 vendor/           Vendored third-party browser bundles (see "Why fully offline?")
 examples/         A full example book exercising every feature
+.npmignore        Trims the published npm tarball (examples/, dotfiles, ...);
+                  package.json's "files" field is the actual allowlist —
+                  bin/, src/, vendor/, README.md, LICENSE — vendor/ ships
+                  because src/assets.js reads it at runtime.
 ```
 
 ## License

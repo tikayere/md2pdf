@@ -41,6 +41,9 @@
  *   features:
  *     cover:          true
  *     toc:            true
+ *     toc_depth:      6         # only list headings up to this level (1-6)
+ *                                # in the table of contents; body anchors and
+ *                                # ids are unaffected either way
  *     page_numbers:   true
  *     chapter_breaks: true      # page break before every top-level (H1) heading —
  *                                # a single markdown file may contain multiple H1
@@ -50,14 +53,24 @@
  *                                # the markdown.
  *
  *   style:
- *     highlight_theme: github           # github | github-dark
+ *     highlight_theme: github           # any highlight.js theme name — github,
+ *                                        # github-dark, monokai, nord,
+ *                                        # atom-one-dark, ... (~80 available)
  *     header_text: ""
  *     footer_text: ""
  *     cover_image: null                 # path to an image (relative to this
  *                                        # config file) to use as the cover
  *                                        # background instead of the gradient
+ *     custom_css: null                  # path to a CSS file (relative to this
+ *                                        # config file) appended after the
+ *                                        # built-in stylesheet, for style
+ *                                        # tweaks beyond what options expose
  *
  *   save_html: null                     # path to save intermediate HTML, or null
+ *   chrome_path: null                   # explicit Chrome/Chromium executable to
+ *                                        # launch, if auto-detection picks wrong
+ *                                        # or the puppeteer-downloaded one won't
+ *                                        # start (same as --chrome-path)
  */
 
 import fs   from 'node:fs';
@@ -89,6 +102,7 @@ const DEFAULTS = {
   features: {
     cover:           true,
     toc:             true,
+    toc_depth:       6,
     page_numbers:    true,
     chapter_breaks:  true,
     chapter_numbers: false,
@@ -99,6 +113,7 @@ const DEFAULTS = {
     header_text:     '',
     footer_text:     '',
     cover_image:     null,
+    custom_css:      null,
   },
 
   save_html: null,
@@ -188,6 +203,7 @@ function loadConfig(configPath) {
     // Features
     coverPage:      features.cover,
     showToc:        features.toc,
+    tocDepth:       validateTocDepth(features.toc_depth, absConfig),
     pageNumbers:    features.page_numbers,
     chapterBreaks:  features.chapter_breaks,
     chapterNumbers: features.chapter_numbers,
@@ -196,11 +212,13 @@ function loadConfig(configPath) {
     highlightTheme: style.highlight_theme,
     headerText:     style.header_text,
     footerText:     style.footer_text,
-    coverImage:     resolveCoverImage(style.cover_image, configDir, absConfig),
+    coverImage:     resolveOptionalPath('Cover image', style.cover_image, configDir, absConfig),
+    customCssPath:  resolveOptionalPath('Custom CSS file', style.custom_css, configDir, absConfig),
 
     // Misc
-    saveHtml: doc.save_html ?? DEFAULTS.save_html,
-    verbose:  doc.verbose   ?? DEFAULTS.verbose,
+    saveHtml:   doc.save_html ?? DEFAULTS.save_html,
+    verbose:    doc.verbose   ?? DEFAULTS.verbose,
+    chromePath: doc.chrome_path ?? null,
   };
 
   const outputPath = path.resolve(
@@ -247,6 +265,7 @@ layout:
 features:
   cover:           true
   toc:             true
+  toc_depth:       6       # only list headings up to this level (1-6) in the TOC
   page_numbers:    true
   chapter_breaks:  true    # new page before every top-level (#) heading;
                             # use "<!-- pagebreak -->" mid-file for extra breaks
@@ -254,13 +273,18 @@ features:
                             # (headings starting with "Appendix" are skipped)
 
 style:
-  highlight_theme: github   # github | github-dark
+  highlight_theme: github   # any highlight.js theme: github, github-dark,
+                            # monokai, nord, atom-one-dark, ...
   header_text: ""
   footer_text: ""
   # cover_image: cover.jpg   # replaces the default gradient cover background
+  # custom_css: custom.css   # appended after the built-in stylesheet
 
 # Uncomment to save intermediate HTML for debugging:
 # save_html: debug.html
+
+# Only needed if Chrome/Chromium auto-detection picks the wrong browser:
+# chrome_path: /usr/bin/google-chrome-stable
 `;
 }
 
@@ -278,15 +302,30 @@ function validateEngine(engine, absConfig) {
   return engine;
 }
 
-/** Resolves style.cover_image relative to the config file, validating it exists. */
-function resolveCoverImage(coverImage, configDir, absConfig) {
-  if (!coverImage) return null;
+/**
+ * Resolves an optional file path (style.cover_image, style.custom_css, ...)
+ * relative to the config file, validating it exists. `label` is only used
+ * to make a missing-file error identify which field it came from.
+ */
+function resolveOptionalPath(label, relativePath, configDir, absConfig) {
+  if (!relativePath) return null;
 
-  const abs = path.resolve(configDir, coverImage);
+  const abs = path.resolve(configDir, relativePath);
   if (!fs.existsSync(abs)) {
-    throw new Error(`Cover image not found: ${abs}\n  (referenced in ${absConfig})`);
+    throw new Error(`${label} not found: ${abs}\n  (referenced in ${absConfig})`);
   }
   return abs;
+}
+
+/** Validates features.toc_depth, since an out-of-range value would silently produce an empty or unfiltered TOC. */
+function validateTocDepth(tocDepth, absConfig) {
+  const n = Number(tocDepth);
+  if (!Number.isInteger(n) || n < 1 || n > 6) {
+    throw new Error(
+      `features.toc_depth must be an integer between 1 and 6 (got "${tocDepth}")\n  (in ${absConfig})`
+    );
+  }
+  return n;
 }
 
 function deepMerge(base, override) {

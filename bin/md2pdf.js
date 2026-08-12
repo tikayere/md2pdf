@@ -64,16 +64,19 @@ program
   // Features
   .option('--no-cover',                'Skip cover page')
   .option('--no-toc',                  'Skip table of contents')
+  .option('--toc-depth <n>',           'Only list headings up to this level (1-6) in the TOC', '')
   .option('--no-page-numbers',         'Skip page numbers')
   .option('--no-chapter-breaks',       'No page break between chapters')
   .option('--chapter-numbers',         'Prefix chapter headings with "Chapter N"', false)
 
   // Style
-  .option('--highlight-theme <theme>', 'github | github-dark',                '')
+  .option('--highlight-theme <theme>', 'Any highlight.js theme: github, github-dark, monokai, nord, atom-one-dark, ...', '')
   .option('--header-text <text>',      'Running header text',                 '')
   .option('--footer-text <text>',      'Running footer text',                 '')
   .option('--cover-image <path>',      'Image to use as the cover background', '')
+  .option('--css <path>',              'Extra CSS file appended after the built-in stylesheet', '')
   .option('--timeout <m>', 'timeout', '')
+  .option('--chrome-path <path>',      'Explicit Chrome/Chromium executable to launch (also: PUPPETEER_EXECUTABLE_PATH)', '')
 
   // Misc
   .option('--sort',                    'Sort input files alphabetically',     false)
@@ -81,6 +84,7 @@ program
   .option('--init',                    'Generate a starter book.yaml and exit')
   .option('--lint',                    'Validate the book without rendering a PDF')
   .option('-v, --verbose',             'Verbose output',                      false)
+  .option('-q, --quiet',               'Suppress progress output (still prints the final result or an error)', false)
 
   .addHelpText('after', `
 Examples:
@@ -108,6 +112,15 @@ Examples:
 
   # Dark code theme + save HTML for debugging
   md2pdf-book guide.md -o guide.pdf --highlight-theme github-dark --save-html debug.html
+
+  # Custom CSS on top of the built-in stylesheet
+  md2pdf-book book.yaml --css my-overrides.css
+
+  # Shallower TOC (only H1/H2) + quiet output for CI/scripting
+  md2pdf-book book.yaml --toc-depth 2 --quiet
+
+  # Point at a specific Chrome install (e.g. when the bundled one won't launch)
+  md2pdf-book book.yaml --chrome-path /usr/bin/google-chrome-stable
 `);
 
 program.parse();
@@ -131,7 +144,7 @@ const args = program.args;
     process.exit(0);
   }
 
-  printBanner(pkg.version);
+  if (!opts.quiet) printBanner(pkg.version);
 
   const firstArg = args[0] ?? '';
   const isConfig = /\.(ya?ml)$/i.test(firstArg);
@@ -154,7 +167,7 @@ async function runLintMode(isConfig, configPath, args, opts) {
 
   try {
     if (isConfig) {
-      console.log(chalk.cyan(`  📋 Config: `) + configPath);
+      if (!opts.quiet) console.log(chalk.cyan(`  📋 Config: `) + configPath);
       ({ files } = loadConfig(configPath));
     } else {
       files = await resolveFileArgs(args, opts);
@@ -164,7 +177,9 @@ async function runLintMode(isConfig, configPath, args, opts) {
     process.exit(1);
   }
 
-  console.log(chalk.yellow(`  🔍 Linting ${files.length} file${files.length > 1 ? 's' : ''}...\n`));
+  if (!opts.quiet) {
+    console.log(chalk.yellow(`  🔍 Linting ${files.length} file${files.length > 1 ? 's' : ''}...\n`));
+  }
 
   const issues = lintBook(files);
   printLintReport(issues);
@@ -174,7 +189,7 @@ async function runLintMode(isConfig, configPath, args, opts) {
 // ─── Config mode ─────────────────────────────────────────────────────────────
 
 async function runConfigMode(configPath, opts) {
-  console.log(chalk.cyan(`  📋 Config: `) + configPath);
+  if (!opts.quiet) console.log(chalk.cyan(`  📋 Config: `) + configPath);
 
   // Build CLI overrides — only pass values the user explicitly set
   const overrides = buildOverrides(opts);
@@ -182,11 +197,11 @@ async function runConfigMode(configPath, opts) {
   try {
     const start = Date.now();
 
-    process.stdout.write(chalk.yellow('  ⏳ Rendering PDF...\n'));
+    if (!opts.quiet) process.stdout.write(chalk.yellow('  ⏳ Rendering PDF...\n'));
 
     const { outputPath, fileCount } = await convertFromConfig(configPath, overrides);
 
-    printSuccess(outputPath, fileCount, start);
+    printSuccess(outputPath, fileCount, start, opts.quiet);
 
   } catch (err) {
     printError(err, opts.verbose);
@@ -225,18 +240,18 @@ async function resolveFileArgs(args, opts) {
 async function runFileMode(args, opts) {
   const resolvedFiles = await resolveFileArgs(args, opts);
 
-  printFileList(resolvedFiles, opts);
+  if (!opts.quiet) printFileList(resolvedFiles, opts);
 
   const outputPath = path.resolve(opts.output || 'book.pdf');
   const options    = buildOptions(opts);
 
   try {
     const start = Date.now();
-    process.stdout.write(chalk.yellow('  ⏳ Rendering PDF...\n'));
+    if (!opts.quiet) process.stdout.write(chalk.yellow('  ⏳ Rendering PDF...\n'));
 
     await convertToPdf(resolvedFiles, outputPath, options);
 
-    printSuccess(outputPath, resolvedFiles.length, start);
+    printSuccess(outputPath, resolvedFiles.length, start, opts.quiet);
 
   } catch (err) {
     printError(err, opts.verbose);
@@ -262,6 +277,9 @@ function buildOverrides(opts) {
   if (opts.headerText)      out.headerText    = opts.headerText;
   if (opts.footerText)      out.footerText    = opts.footerText;
   if (opts.coverImage)      out.coverImage    = path.resolve(opts.coverImage);
+  if (opts.css)             out.customCssPath = path.resolve(opts.css);
+  if (opts.tocDepth)        out.tocDepth      = parseInt(opts.tocDepth, 10);
+  if (opts.chromePath)      out.chromePath    = opts.chromePath;
   if (opts.saveHtml)        out.saveHtml      = opts.saveHtml;
   if (opts.verbose)         out.verbose       = opts.verbose;
 
@@ -299,6 +317,9 @@ function buildOptions(opts) {
     headerText:     opts.headerText     || '',
     footerText:     opts.footerText     || '',
     coverImage:     opts.coverImage     ? path.resolve(opts.coverImage) : null,
+    customCssPath:  opts.css            ? path.resolve(opts.css) : null,
+    tocDepth:       opts.tocDepth       ? parseInt(opts.tocDepth, 10) : 6,
+    chromePath:     opts.chromePath     || null,
     saveHtml:       opts.saveHtml       || null,
     verbose:        opts.verbose        || false,
     coverPage:      opts.cover !== false,
@@ -330,7 +351,14 @@ function printFileList(files, opts) {
   console.log('');
 }
 
-function printSuccess(outputPath, fileCount, startMs) {
+function printSuccess(outputPath, fileCount, startMs, quiet = false) {
+  // --quiet still needs to say *something* — a script piping this output
+  // needs the resulting path — but skips the timing/decoration around it.
+  if (quiet) {
+    console.log(outputPath);
+    return;
+  }
+
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
   let size = '?';
   try {

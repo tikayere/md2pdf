@@ -75,4 +75,22 @@ function getHljsThemeCss(themeName) {
   return fs.readFileSync(file, 'utf8');
 }
 
-export { katexJs, katexCss, mermaidJs, pagedJs, getHljsThemeCss };
+/**
+ * Whether `themeName` matches one of the ~80 themes shipped in
+ * highlight.js/styles (not just the two — github/github-dark — this tool
+ * used to hardcode as the only legal choices). Used by converter.js to
+ * fail fast with a clear error instead of silently falling back.
+ */
+function hljsThemeExists(themeName) {
+  return typeof themeName === 'string' && fs.existsSync(path.join(hljsStylesDir, `${themeName}.min.css`));
+}
+
+/** All theme names available to `style.highlight_theme` / `--highlight-theme`. */
+function listHljsThemes() {
+  return fs.readdirSync(hljsStylesDir)
+    .filter((f) => f.endsWith('.min.css'))
+    .map((f) => f.replace(/\.min\.css$/, ''))
+    .sort();
+}
+
+export { katexJs, katexCss, mermaidJs, pagedJs, getHljsThemeCss, hljsThemeExists, listHljsThemes };
